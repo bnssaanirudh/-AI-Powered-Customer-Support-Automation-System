@@ -83,14 +83,12 @@ def create_workflow():
         }
     )
     
-    # All agents route to supervisor, except memory which goes straight to finalize
+    # All agents (including memory) route through supervisor for universal quality control
     workflow.add_edge("sales_agent", "supervisor")
     workflow.add_edge("technical_agent", "supervisor")
     workflow.add_edge("billing_agent", "supervisor")
     workflow.add_edge("account_agent", "supervisor")
-    
-    # Memory doesn't need supervisor check
-    workflow.add_edge("memory_agent", "finalize_response")
+    workflow.add_edge("memory_agent", "supervisor")  # Memory also validated by supervisor (Task 9)
     
     # Conditional routing after supervisor for high risk
     workflow.add_conditional_edges(

@@ -74,44 +74,79 @@ def account_agent_node(state: CustomerSupportState):
     return department_agent(state, "Account")
 
 def memory_agent_node(state: CustomerSupportState):
-    # Retrieve answer using stored memory
+    """Memory recall agent: answers follow-up questions from conversation history stored in SQLite."""
     messages = state.get("messages", [])
     
-    # We pass the conversation history to the LLM
+    # Build a readable history string from stored HumanMessage / AIMessage pairs
+    history_str = "\n".join(
+        [f"{m.type.upper()}: {m.content}" for m in messages if m.type in ('human', 'ai')]
+    )
+    
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a customer support agent. The user is asking about their previous interactions. Answer their question using the conversation history provided below. Be concise."),
+        ("system", "You are a customer support agent. The user is asking about their previous support interactions. "
+                   "Answer ONLY using the Conversation History below. Do NOT invent or assume anything. "
+                   "State only what is clearly present in the history. Be concise and factual."),
         ("human", "Conversation History:\n{history}\n\nQuery: {query}")
     ])
     
-    history_str = "\n".join([f"{m.type}: {m.content}" for m in messages if m.type in ('human', 'ai')])
     chain = prompt | llm
     response = chain.invoke({"history": history_str, "query": state["customer_query"]})
     
     return {
         "proposed_response": response.content,
-        "is_high_risk": False, # Memory recall is not high risk
-        "retrieved_context": "" # Clear any stale RAG context so it doesn't show in debug
+        "retrieved_context": ""  # Clear stale RAG context — memory uses history, not documents
     }
 
+# Deterministic high-risk keyword detection — never missed by the LLM
+HIGH_RISK_KEYWORDS = [
+    "refund",
+    "cancel",
+    "cancellation",
+    "close my account",
+    "account closure",
+    "compensation",
+    "escalate",
+    "escalation",
+    "management",
+]
+
 def supervisor_node(state: CustomerSupportState):
+    """Supervisor: verifies RAG grounding, improves tone, and detects high-risk requests."""
     proposed_response = state.get("proposed_response", "")
     query = state.get("customer_query", "")
+    context = state.get("retrieved_context", "")
     
+    # --- Deterministic high-risk check (always reliable) ---
+    query_lower = query.lower()
+    is_high_risk = any(keyword in query_lower for keyword in HIGH_RISK_KEYWORDS)
+    
+    # --- LLM-based grounding verification and tone improvement ---
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a Customer Support Supervisor. Your job is to validate and improve the proposed response to the customer for tone and professionalism. "
-                   "Also, determine if the user's request is HIGH RISK. High risk includes: Refund, Cancellation, Account closure, Compensation. "
-                   "Your output must be exactly in this format:\n"
-                   "HIGH_RISK: YES or NO\n"
-                   "IMPROVED_RESPONSE: <your improved response>"),
+        ("system",
+         "You are a Customer Support Supervisor at ABC Technologies.\n\n"
+         "Review the proposed response using ONLY the Retrieved Context and Conversation History below.\n\n"
+         "Rules:\n"
+         "1. Remove any statement NOT supported by the retrieved context or conversation history.\n"
+         "2. Preserve exact prices, limits, policies, and time periods from the context.\n"
+         "3. Do NOT invent timelines, website links, phone numbers, or processing guarantees.\n"
+         "4. Improve the professional tone and completeness of the response.\n"
+         "5. Your output MUST be exactly in this format (two lines only):\n"
+         "HIGH_RISK: YES or NO\n"
+         "IMPROVED_RESPONSE: <your final grounded response>"
+         "\n\nRetrieved Context:\n{context}"),
         ("human", "User Query: {query}\nProposed Response: {response}")
     ])
     
     chain = prompt | llm
-    result = chain.invoke({"query": query, "response": proposed_response})
+    result = chain.invoke({"query": query, "response": proposed_response, "context": context})
     
     content = result.content
-    is_high_risk = "HIGH_RISK: YES" in content.upper()
     
+    # Also check LLM's risk assessment (OR with deterministic check)
+    if "HIGH_RISK: YES" in content.upper():
+        is_high_risk = True
+    
+    # Parse the improved response
     improved_response = proposed_response
     if "IMPROVED_RESPONSE:" in content:
         improved_response = content.split("IMPROVED_RESPONSE:")[1].strip()

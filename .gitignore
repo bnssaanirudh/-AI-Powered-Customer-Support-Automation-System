@@ -1,0 +1,40 @@
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Environment variables
+.env
+*.env
+
+# ChromaDB vector store (regenerated on first run)
+chroma_db/
+
+# SQLite memory database (generated at runtime)
+memory.db
+
+# Screenshots and submission artifacts
+Screenshots.pdf
+assignment2_submission.zip
+harshita_code/
+
+# Generated files
+generate_docs.py
+generate_screenshots.py
+workflow_diagram.png
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+
+# OS files
+.DS_Store
+Thumbs.db

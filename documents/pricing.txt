@@ -1,0 +1,10 @@
+# Pricing Guide
+
+## Subscription Plans
+ABC Technologies offers three subscription plans:
+1. **Basic Plan**: $29/month. Includes core business management features and standard email support.
+2. **Pro Plan**: $79/month. Includes advanced analytics, priority support, and up to 5 user accounts.
+3. **Enterprise Plan**: $199/month (or custom pricing). Includes dedicated account manager, unlimited users, and 24/7 phone support.
+
+## Annual Subscriptions
+We offer a 20% discount on all plans if billed annually.

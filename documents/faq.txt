@@ -1,0 +1,10 @@
+# FAQ Document
+
+## Password Reset
+To reset your password, click on the "Forgot Password" link on the login page. An email with a reset link will be sent to your registered email address. This is handled by the Account department.
+
+## Profile Updates
+You can update your profile information, including your name, email, and company details, by logging into your account and visiting the Profile section.
+
+## Invoice Requests
+You can download your past invoices from the Billing section of the dashboard. If you need a custom invoice, please contact the Billing department.

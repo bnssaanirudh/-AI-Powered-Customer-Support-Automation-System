@@ -1,0 +1,12 @@
+langchain
+langchain-groq
+langchain-huggingface
+langchain-community
+langgraph
+langgraph-checkpoint-sqlite
+chromadb
+pysqlite3
+tiktoken
+python-dotenv
+sentence-transformers
+langchain-text-splitters

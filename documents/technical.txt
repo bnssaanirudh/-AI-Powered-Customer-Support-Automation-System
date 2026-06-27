@@ -1,0 +1,10 @@
+# Technical Manual
+
+## Installation Issues
+If you encounter installation errors, ensure your system meets the minimum requirements (Windows 10/macOS 11+, 8GB RAM). 
+
+## Application Crashes
+If the application crashes whenever you upload a file, it is usually due to a file size exceeding the 50MB limit or an unsupported file format. We support PDF, JPG, and PNG files. To resolve this, compress your files or convert them to a supported format before uploading.
+
+## Configuration
+For configuration issues, navigate to the Settings tab in the application dashboard. Ensure your API keys are correctly entered and saved.

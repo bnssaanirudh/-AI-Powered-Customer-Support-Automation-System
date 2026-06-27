@@ -1,0 +1,10 @@
+# Company Policy
+
+## Refunds
+Customers can request a refund within 30 days of their purchase if they are unsatisfied with the product. All refund requests must be routed to the Billing department and require human approval. Refunds for annual subscriptions will be prorated.
+
+## Cancellations
+Subscription cancellations can be requested at any time. Cancellations take effect at the end of the current billing cycle. Account closure requests must be approved by a human supervisor to ensure all data is properly archived and the user understands the consequences.
+
+## Escalations
+Any request for compensation or escalation to management must be reviewed by a human supervisor.

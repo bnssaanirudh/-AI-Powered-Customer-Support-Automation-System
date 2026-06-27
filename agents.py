@@ -1,61 +1,86 @@
 from dotenv import load_dotenv
 load_dotenv()
+import re
 from langchain_groq import ChatGroq
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field
 from state import CustomerSupportState
 from rag_pipeline import retrieve_context
 
 # Initialize LLM
 llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0)
 
+# ── Deterministic high-risk detection (regex) ────────────────────────────────
+# These patterns guarantee HITL for assignment-required cases regardless of LLM output.
+HIGH_RISK_PATTERNS = [
+    r"\brefund(s|ed)?\b",
+    r"\bcancel(lation|led|ing)?\b",
+    r"\b(close|closure|deactivate|delete)\s+(my\s+)?account\b",
+    r"\bcompensation\b",
+    r"\bescalat(e|ion)\b",
+    r"\bmanagement\b",
+]
 
+def requires_human_approval(query: str) -> bool:
+    """Return True if the query matches any high-risk pattern."""
+    q = query.lower().strip()
+    return any(re.search(pattern, q) for pattern in HIGH_RISK_PATTERNS)
+
+
+# ── Intent classification ─────────────────────────────────────────────────────
 
 def classify_intent_node(state: CustomerSupportState):
+    """Classify the customer query into a department or Memory recall."""
     query = state.get("customer_query", "")
-    
-    # Check if the query is asking about past memory/issues
-    if "previous" in query.lower() or "past" in query.lower() or "what was my" in query.lower():
-         return {"department": "Memory"}
+
+    # Deterministic memory-recall detection before calling LLM
+    memory_triggers = [
+        "previous", "past", "what was my", "last issue", "earlier issue",
+        "recall", "remember", "history", "before"
+    ]
+    if any(t in query.lower() for t in memory_triggers):
+        return {"department": "Memory"}
 
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "Classify the user query into ONE of these exact words: Sales, Technical, Billing, Account. Output ONLY the word, nothing else. "
-                   "Sales: Product information, subscription plans, pricing details. "
-                   "Technical: Application errors, installation issues, login problems, configuration issues. "
-                   "Billing: Invoice requests, payment issues, refund requests. "
-                   "Account: Password reset, profile updates, account activation/deactivation."),
+        ("system",
+         "Classify the user query into ONE of these exact words: Sales, Technical, Billing, Account.\n"
+         "Output ONLY the single word, nothing else.\n"
+         "Sales: product information, subscription plans, pricing details.\n"
+         "Technical: application errors, installation issues, upload problems, crashes, configuration.\n"
+         "Billing: invoice requests, payment issues, refund requests.\n"
+         "Account: password reset, profile updates, account activation/deactivation."),
         ("human", "{query}")
     ])
-    
+
     chain = prompt | llm
     result = chain.invoke({"query": query})
-    
     dept = result.content.strip()
     if dept not in ["Sales", "Technical", "Billing", "Account"]:
         dept = "Sales"
-    
     return {"department": dept}
 
+
+# ── Department agents (RAG-grounded) ─────────────────────────────────────────
+
 def department_agent(state: CustomerSupportState, department_name: str):
+    """Generic RAG-grounded department agent."""
     query = state.get("customer_query", "")
-    
-    # Retrieve context from RAG
     context = retrieve_context(query)
-    
+
     prompt = ChatPromptTemplate.from_messages([
-        ("system", f"You are a helpful customer support agent for the {{department_name}} department at ABC Technologies. "
-                   "Answer the user's query STRICTLY and ONLY using the facts provided in the Context below. "
-                   "DO NOT invent or guess any prices, policies, limits, or features that are not explicitly stated in the text. "
-                   "If the context does not contain the exact answer, you MUST state that you do not know but will escalate it. "
-                   "For policy or refund questions, always provide the complete details mentioned in the text (like timeframes, human approval, or prorating) if relevant."
-                   "\n\nContext:\n{{context}}"),
+        ("system",
+         f"You are a helpful customer support agent for the {{department_name}} department at ABC Technologies.\n"
+         "Answer the user's query STRICTLY and ONLY using the facts in the Context below.\n"
+         "DO NOT invent or guess any prices, policies, limits, or features not explicitly stated in the text.\n"
+         "If the context does not contain the exact answer, say you will escalate the issue.\n"
+         "For refund or policy questions, include ALL relevant details: timeframes, "
+         "prorating rules, and human approval requirements.\n\n"
+         "Context:\n{context}"),
         ("human", "{query}")
     ])
-    
+
     chain = prompt | llm
     response = chain.invoke({"department_name": department_name, "context": context, "query": query})
-    
     return {
         "retrieved_context": context,
         "proposed_response": response.content
@@ -73,80 +98,91 @@ def billing_agent_node(state: CustomerSupportState):
 def account_agent_node(state: CustomerSupportState):
     return department_agent(state, "Account")
 
+
+# ── Memory recall agent (deterministic) ──────────────────────────────────────
+
 def memory_agent_node(state: CustomerSupportState):
-    """Memory recall agent: answers follow-up questions from conversation history stored in SQLite."""
-    messages = state.get("messages", [])
-    
-    # Build a readable history string from stored HumanMessage / AIMessage pairs
-    history_str = "\n".join(
-        [f"{m.type.upper()}: {m.content}" for m in messages if m.type in ('human', 'ai')]
-    )
-    
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a customer support agent. The user is asking about their previous support interactions. "
-                   "Answer ONLY using the Conversation History below. Do NOT invent or assume anything. "
-                   "State only what is clearly present in the history. Be concise and factual."),
-        ("human", "Conversation History:\n{history}\n\nQuery: {query}")
-    ])
-    
-    chain = prompt | llm
-    response = chain.invoke({"history": history_str, "query": state["customer_query"]})
-    
+    """
+    Deterministic memory agent.
+    Reads HumanMessage history from state and returns the most recent
+    previous query (excluding the current memory-recall question itself).
+    No LLM call needed — purely based on stored conversation state.
+    """
+    current_query = state.get("customer_query", "").strip().lower()
+    previous_queries = []
+
+    for message in state.get("messages", []):
+        if isinstance(message, HumanMessage):
+            content = str(message.content).strip()
+            # Exclude the current memory-recall question itself
+            if content.lower() != current_query:
+                previous_queries.append(content)
+
+    if previous_queries:
+        last_issue = previous_queries[-1]
+        response = (
+            f'Based on our conversation history, your previous support issue was: '
+            f'"{last_issue}"'
+        )
+    else:
+        response = (
+            "I could not find an earlier support issue in this conversation session. "
+            "Please ensure you are using the same Customer ID as your previous session."
+        )
+
     return {
-        "proposed_response": response.content,
-        "retrieved_context": ""  # Clear stale RAG context — memory uses history, not documents
+        "retrieved_context": "",        # No RAG for memory recall
+        "proposed_response": response,
+        "is_high_risk": False,
+        "human_approved": False,
     }
 
-# Deterministic high-risk keyword detection — never missed by the LLM
-HIGH_RISK_KEYWORDS = [
-    "refund",
-    "cancel",
-    "cancellation",
-    "close my account",
-    "account closure",
-    "compensation",
-    "escalate",
-    "escalation",
-    "management",
-]
+
+# ── Supervisor node ───────────────────────────────────────────────────────────
 
 def supervisor_node(state: CustomerSupportState):
-    """Supervisor: verifies RAG grounding, improves tone, and detects high-risk requests."""
+    """
+    Supervisor: verifies RAG grounding, improves tone, and applies
+    deterministic high-risk detection. Memory recall bypasses grounding check.
+    """
     proposed_response = state.get("proposed_response", "")
     query = state.get("customer_query", "")
     context = state.get("retrieved_context", "")
-    
-    # --- Deterministic high-risk check (always reliable) ---
-    query_lower = query.lower()
-    is_high_risk = any(keyword in query_lower for keyword in HIGH_RISK_KEYWORDS)
-    
-    # --- LLM-based grounding verification and tone improvement ---
+    department = state.get("department", "")
+
+    # Memory recall: no grounding check, never high-risk
+    if department == "Memory":
+        return {
+            "proposed_response": proposed_response,
+            "is_high_risk": False,
+            "human_approved": False,
+        }
+
+    # Deterministic HITL decision — always authoritative, LLM cannot override
+    is_high_risk = requires_human_approval(query)
+
+    # LLM-based grounding verification and tone improvement
     prompt = ChatPromptTemplate.from_messages([
         ("system",
          "You are a Customer Support Supervisor at ABC Technologies.\n\n"
-         "Review the proposed response using ONLY the Retrieved Context and Conversation History below.\n\n"
+         "Review the proposed response using ONLY the Retrieved Context below.\n\n"
          "Rules:\n"
-         "1. Remove any statement NOT supported by the retrieved context or conversation history.\n"
+         "1. Remove any statement NOT supported by the retrieved context.\n"
          "2. Preserve exact prices, limits, policies, and time periods from the context.\n"
          "3. Do NOT invent timelines, website links, phone numbers, or processing guarantees.\n"
          "4. Improve the professional tone and completeness of the response.\n"
-         "5. Your output MUST be exactly in this format (two lines only):\n"
+         "5. Your output MUST be exactly in this format:\n"
          "HIGH_RISK: YES or NO\n"
-         "IMPROVED_RESPONSE: <your final grounded response>"
-         "\n\nRetrieved Context:\n{context}"),
+         "IMPROVED_RESPONSE: <your final grounded response>\n\n"
+         "Retrieved Context:\n{context}"),
         ("human", "User Query: {query}\nProposed Response: {response}")
     ])
-    
+
     chain = prompt | llm
     result = chain.invoke({"query": query, "response": proposed_response, "context": context})
-    
     content = result.content
-    
-    # Also check LLM's risk assessment (OR with deterministic check)
-    if "HIGH_RISK: YES" in content.upper():
-        is_high_risk = True
-    
-    # Parse the improved response
+
+    # Parse improved response from supervisor output
     improved_response = proposed_response
     if "IMPROVED_RESPONSE:" in content:
         improved_response = content.split("IMPROVED_RESPONSE:")[1].strip()
@@ -154,8 +190,9 @@ def supervisor_node(state: CustomerSupportState):
         improved_response = content.split("IMPROVED_RESPONSE")[1].strip()
         if improved_response.startswith(":"):
             improved_response = improved_response[1:].strip()
-    
+
     return {
-        "is_high_risk": is_high_risk,
-        "proposed_response": improved_response
+        "is_high_risk": is_high_risk,       # Deterministic result is final
+        "proposed_response": improved_response,
+        "human_approved": False,
     }

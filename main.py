@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from graph import create_workflow
 
 def draw_workflow(app):
@@ -43,15 +43,23 @@ def main():
         print(f"\n{'='*50}")
         print(f"PROCESSING QUERY: {q}")
         print(f"{'='*50}")
-        # We also pass the human message into the messages array so it's stored in memory
+
+        # Pass HumanMessage so memory agent can read conversation history.
+        # Reset all transient fields to prevent state bleed between queries.
         initial_state = {
             "customer_query": q,
-            "messages": [HumanMessage(content=q)]
+            "messages": [HumanMessage(content=q)],
+            "department": "",
+            "retrieved_context": "",
+            "proposed_response": "",
+            "is_high_risk": False,
+            "human_approved": False,
+            "final_response": "",
         }
         
         # Execute workflow
         for event in app.stream(initial_state, config, stream_mode="values"):
-            pass # We iterate through the stream to reach the end/breakpoint
+            pass  # Iterate to reach the end or HITL breakpoint
         
         # Check current state
         state = app.get_state(config)
@@ -83,9 +91,8 @@ def main():
         print(f"\nROUTED TO: {state.values.get('department')}")
         print(f"FINAL RESPONSE: {state.values.get('final_response')}")
         
-        # We should append the AI response to the message history so memory agent can access it later
+        # Save the AI response to message history so memory agent can recall it next turn
         if state.values.get("final_response"):
-            from langchain_core.messages import AIMessage
             app.update_state(config, {"messages": [AIMessage(content=state.values.get("final_response"))]})
             
         print("[System] Conversation state successfully saved to SQLite memory.db checkpoint.")

@@ -19,7 +19,7 @@ def setup_rag_pipeline():
     # Using ephemeral Chroma DB in memory for this project (or persistent if needed)
     vectorstore = Chroma.from_documents(documents=splits, embedding=embeddings, persist_directory="./chroma_db")
     
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 1})
     return retriever
 
 # Global retriever instance

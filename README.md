@@ -44,6 +44,3 @@ The script provides an interactive terminal loop:
 4. **Memory Verification**: Try asking about previous interactions to see the memory agent recall details dynamically.
 A `workflow_diagram.png` will also be generated dynamically in the root directory showing the pure LangGraph architecture nodes.
 
-
-## Submission Output
-Once you have run the script, please take screenshots of the console output and generate the required PDF for submission. Then, bundle these project files into a ZIP file.
